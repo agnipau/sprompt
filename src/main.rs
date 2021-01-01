@@ -1,16 +1,38 @@
 #![allow(dead_code)]
 
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg};
+use std::convert::TryFrom;
 use std::env;
 use std::fmt::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn main() {
-    let non_zero_exit_status = env::args()
-        .skip(1)
-        .next()
-        .map(|x| &x != "0")
-        .unwrap_or(false);
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about(crate_description!())
+        .settings(&[AppSettings::ColorAuto, AppSettings::ColoredHelp])
+        .arg(
+            Arg::with_name("exit_code")
+                .short("e")
+                .takes_value(true)
+                .help("Last command exit code")
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("shell")
+                .short("s")
+                .takes_value(true)
+                .help("The shell where the prompt will be shown")
+                .required(true)
+                .possible_values(&["zsh", "posix"]),
+        )
+        .get_matches();
+
+    let non_zero_exit_status = matches.value_of("exit_code").unwrap() != "0";
+    let ref shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
+
     let git = Git::default();
     let cwd = get_cwd().unwrap_or("??".into());
 
@@ -18,17 +40,17 @@ fn main() {
     let _ = write!(
         &mut s,
         "{}{}{} ",
-        Attribute::Bold.to_str(&TargetShell::Zsh),
-        Color::Cyan.to_str(false, &TargetShell::Zsh),
+        Attribute::Bold.to_str(shell),
+        Color::Cyan.to_str(false, shell),
         cwd
     );
     if let Some(branch) = git.branch() {
         let _ = write!(
             &mut s,
             "{}on {}{}{} ",
-            Attribute::Reset.to_str(&TargetShell::Zsh),
-            Attribute::Bold.to_str(&TargetShell::Zsh),
-            Color::Magenta.to_str(false, &TargetShell::Zsh),
+            Attribute::Reset.to_str(shell),
+            Attribute::Bold.to_str(shell),
+            Color::Magenta.to_str(false, shell),
             branch
         );
         // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
@@ -38,11 +60,11 @@ fn main() {
         &mut s,
         "{}::{} ",
         if non_zero_exit_status {
-            Color::Red.to_str(false, &TargetShell::Zsh)
+            Color::Red.to_str(false, shell)
         } else {
-            Color::Green.to_str(false, &TargetShell::Zsh)
+            Color::Green.to_str(false, shell)
         },
-        Attribute::Reset.to_str(&TargetShell::Zsh),
+        Attribute::Reset.to_str(shell),
     );
 
     print!("{}", s);
@@ -171,9 +193,21 @@ fn get_cwd() -> Option<String> {
     })
 }
 
-enum TargetShell {
+enum Shell {
     Zsh,
     Posix,
+}
+
+impl TryFrom<&str> for Shell {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "zsh" => Ok(Self::Zsh),
+            "posix" => Ok(Self::Posix),
+            _ => Err(()),
+        }
+    }
 }
 
 enum Color {
@@ -188,17 +222,17 @@ enum Color {
 }
 
 impl Color {
-    fn to_str(&self, bright: bool, target_shell: &TargetShell) -> &str {
+    fn to_str(&self, bright: bool, shell: &Shell) -> &str {
         match self {
-            Self::Black => match target_shell {
-                TargetShell::Posix => {
+            Self::Black => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[30;1m"
                     } else {
                         "\u{001b}[30m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[30;1m%}"
                     } else {
@@ -206,15 +240,15 @@ impl Color {
                     }
                 }
             },
-            Self::Red => match target_shell {
-                TargetShell::Posix => {
+            Self::Red => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[31;1m"
                     } else {
                         "\u{001b}[31m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[31;1m%}"
                     } else {
@@ -222,15 +256,15 @@ impl Color {
                     }
                 }
             },
-            Self::Green => match target_shell {
-                TargetShell::Posix => {
+            Self::Green => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[32;1m"
                     } else {
                         "\u{001b}[32m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[32;1m%}"
                     } else {
@@ -238,15 +272,15 @@ impl Color {
                     }
                 }
             },
-            Self::Yellow => match target_shell {
-                TargetShell::Posix => {
+            Self::Yellow => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[33;1m"
                     } else {
                         "\u{001b}[33m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[33;1m%}"
                     } else {
@@ -254,15 +288,15 @@ impl Color {
                     }
                 }
             },
-            Self::Blue => match target_shell {
-                TargetShell::Posix => {
+            Self::Blue => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[34;1m"
                     } else {
                         "\u{001b}[34m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[34;1m%}"
                     } else {
@@ -270,15 +304,15 @@ impl Color {
                     }
                 }
             },
-            Self::Magenta => match target_shell {
-                TargetShell::Posix => {
+            Self::Magenta => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[35;1m"
                     } else {
                         "\u{001b}[35m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[35;1m%}"
                     } else {
@@ -286,15 +320,15 @@ impl Color {
                     }
                 }
             },
-            Self::Cyan => match target_shell {
-                TargetShell::Posix => {
+            Self::Cyan => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[36;1m"
                     } else {
                         "\u{001b}[36m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[36;1m%}"
                     } else {
@@ -302,15 +336,15 @@ impl Color {
                     }
                 }
             },
-            Self::White => match target_shell {
-                TargetShell::Posix => {
+            Self::White => match shell {
+                Shell::Posix => {
                     if bright {
                         "\u{001b}[37;1m"
                     } else {
                         "\u{001b}[37m"
                     }
                 }
-                TargetShell::Zsh => {
+                Shell::Zsh => {
                     if bright {
                         "%{\u{001b}[37;1m%}"
                     } else {
@@ -330,23 +364,23 @@ enum Attribute {
 }
 
 impl Attribute {
-    fn to_str(&self, target_shell: &TargetShell) -> &str {
+    fn to_str(&self, shell: &Shell) -> &str {
         match self {
-            Self::Reset => match target_shell {
-                TargetShell::Posix => "\u{001b}[0m",
-                TargetShell::Zsh => "%{\u{001b}[0m%}",
+            Self::Reset => match shell {
+                Shell::Posix => "\u{001b}[0m",
+                Shell::Zsh => "%{\u{001b}[0m%}",
             },
-            Self::Bold => match target_shell {
-                TargetShell::Posix => "\u{001b}[1m",
-                TargetShell::Zsh => "%{\u{001b}[1m%}",
+            Self::Bold => match shell {
+                Shell::Posix => "\u{001b}[1m",
+                Shell::Zsh => "%{\u{001b}[1m%}",
             },
-            Self::Underline => match target_shell {
-                TargetShell::Posix => "\u{001b}[4m",
-                TargetShell::Zsh => "%{\u{001b}[4m%}",
+            Self::Underline => match shell {
+                Shell::Posix => "\u{001b}[4m",
+                Shell::Zsh => "%{\u{001b}[4m%}",
             },
-            Self::Reversed => match target_shell {
-                TargetShell::Posix => "\u{001b}[7m",
-                TargetShell::Zsh => "%{\u{001b}[7m%}",
+            Self::Reversed => match shell {
+                Shell::Posix => "\u{001b}[7m",
+                Shell::Zsh => "%{\u{001b}[7m%}",
             },
         }
     }
