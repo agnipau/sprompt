@@ -1,10 +1,52 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::io::Write;
+use std::fmt::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use termcolor::{BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
+
+fn main() {
+    let non_zero_exit_status = env::args()
+        .skip(1)
+        .next()
+        .map(|x| &x != "0")
+        .unwrap_or(false);
+    let git = Git::default();
+    let cwd = get_cwd().unwrap_or("??".into());
+
+    let mut s = String::new();
+    let _ = write!(
+        &mut s,
+        "{}{}{} ",
+        Attribute::Bold.to_str(&TargetShell::Zsh),
+        Color::Cyan.to_str(false, &TargetShell::Zsh),
+        cwd
+    );
+    if let Some(branch) = git.branch() {
+        let _ = write!(
+            &mut s,
+            "{}on {}{}{} ",
+            Attribute::Reset.to_str(&TargetShell::Zsh),
+            Attribute::Bold.to_str(&TargetShell::Zsh),
+            Color::Magenta.to_str(false, &TargetShell::Zsh),
+            branch
+        );
+        // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
+        // (like UnrealEngine) is quite difficult.
+    }
+    let _ = write!(
+        &mut s,
+        "{}::{} ",
+        if non_zero_exit_status {
+            Color::Red.to_str(false, &TargetShell::Zsh)
+        } else {
+            Color::Green.to_str(false, &TargetShell::Zsh)
+        },
+        Attribute::Reset.to_str(&TargetShell::Zsh),
+    );
+
+    print!("{}", s);
+}
 
 struct Git {
     inside_repo: bool,
@@ -129,47 +171,183 @@ fn get_cwd() -> Option<String> {
     })
 }
 
-fn main() {
-    let non_zero_exit_status = env::args()
-        .skip(1)
-        .next()
-        .map(|x| &x != "0")
-        .unwrap_or(false);
-    let git = Git::default();
-    let cwd = get_cwd().unwrap_or("??".into());
-    let bufwrt = BufferWriter::stdout(ColorChoice::Auto);
+enum TargetShell {
+    Zsh,
+    Posix,
+}
 
-    let mut buffer = bufwrt.buffer();
-    let mut color_spec = ColorSpec::new();
-    let _ = buffer.set_color(color_spec.set_bold(true).set_fg(Some(Color::Cyan)));
-    let _ = write!(&mut buffer, "{} ", cwd);
-    if let Some(branch) = git.branch() {
-        let _ = buffer.set_color(color_spec.set_bold(false).set_fg(None));
-        let _ = write!(&mut buffer, "on ");
-        let _ = buffer.set_color(color_spec.set_bold(true).set_fg(Some(Color::Magenta)));
-        let _ = write!(&mut buffer, " {} ", branch);
-        // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
-        // (like UnrealEngine) is quite difficult.
-        if false {
-            if git.has_changes_to_stage().unwrap_or(false) {
-                let _ = buffer.set_color(color_spec.set_fg(Some(Color::Red)));
-                let _ = write!(&mut buffer, "[!] ");
-            } else if git.has_untracked_files().unwrap_or(false) {
-                let _ = buffer.set_color(color_spec.set_fg(Some(Color::Red)));
-                let _ = write!(&mut buffer, "[?] ");
-            }
+enum Color {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+}
+
+impl Color {
+    fn to_str(&self, bright: bool, target_shell: &TargetShell) -> &str {
+        match self {
+            Self::Black => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[30;1m"
+                    } else {
+                        "\u{001b}[30m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[30;1m%}"
+                    } else {
+                        "%{\u{001b}[30m%}"
+                    }
+                }
+            },
+            Self::Red => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[31;1m"
+                    } else {
+                        "\u{001b}[31m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[31;1m%}"
+                    } else {
+                        "%{\u{001b}[31m%}"
+                    }
+                }
+            },
+            Self::Green => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[32;1m"
+                    } else {
+                        "\u{001b}[32m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[32;1m%}"
+                    } else {
+                        "%{\u{001b}[32m%}"
+                    }
+                }
+            },
+            Self::Yellow => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[33;1m"
+                    } else {
+                        "\u{001b}[33m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[33;1m%}"
+                    } else {
+                        "%{\u{001b}[33m%}"
+                    }
+                }
+            },
+            Self::Blue => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[34;1m"
+                    } else {
+                        "\u{001b}[34m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[34;1m%}"
+                    } else {
+                        "%{\u{001b}[34m%}"
+                    }
+                }
+            },
+            Self::Magenta => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[35;1m"
+                    } else {
+                        "\u{001b}[35m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[35;1m%}"
+                    } else {
+                        "%{\u{001b}[35m%}"
+                    }
+                }
+            },
+            Self::Cyan => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[36;1m"
+                    } else {
+                        "\u{001b}[36m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[36;1m%}"
+                    } else {
+                        "%{\u{001b}[36m%}"
+                    }
+                }
+            },
+            Self::White => match target_shell {
+                TargetShell::Posix => {
+                    if bright {
+                        "\u{001b}[37;1m"
+                    } else {
+                        "\u{001b}[37m"
+                    }
+                }
+                TargetShell::Zsh => {
+                    if bright {
+                        "%{\u{001b}[37;1m%}"
+                    } else {
+                        "%{\u{001b}[37m%}"
+                    }
+                }
+            },
         }
     }
-    let _ = buffer.set_color(
-        color_spec
-            .set_bold(true)
-            .set_fg(Some(if non_zero_exit_status {
-                Color::Red
-            } else {
-                Color::Green
-            })),
-    );
-    let _ = write!(&mut buffer, "❯ ");
+}
 
-    let _ = bufwrt.print(&buffer);
+enum Attribute {
+    Reset,
+    Bold,
+    Underline,
+    Reversed,
+}
+
+impl Attribute {
+    fn to_str(&self, target_shell: &TargetShell) -> &str {
+        match self {
+            Self::Reset => match target_shell {
+                TargetShell::Posix => "\u{001b}[0m",
+                TargetShell::Zsh => "%{\u{001b}[0m%}",
+            },
+            Self::Bold => match target_shell {
+                TargetShell::Posix => "\u{001b}[1m",
+                TargetShell::Zsh => "%{\u{001b}[1m%}",
+            },
+            Self::Underline => match target_shell {
+                TargetShell::Posix => "\u{001b}[4m",
+                TargetShell::Zsh => "%{\u{001b}[4m%}",
+            },
+            Self::Reversed => match target_shell {
+                TargetShell::Posix => "\u{001b}[7m",
+                TargetShell::Zsh => "%{\u{001b}[7m%}",
+            },
+        }
+    }
 }
