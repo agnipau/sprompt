@@ -3,7 +3,7 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
-use git2::Repository;
+use git2::{ErrorCode, Repository};
 use std::convert::TryFrom;
 use std::env;
 use std::fmt::Write;
@@ -67,33 +67,6 @@ fn test_humanize_duration() {
         "34h 59m 59s",
         humanize_duration(&Duration::from_secs(60 * 60 * 34 + 60 * 59 + 59))
     );
-}
-
-fn get_current_branch(repo: &Repository) -> Option<String> {
-    let head = match repo.head() {
-        Ok(reference) => reference,
-        Err(e) => {
-            return if e.code() == git2::ErrorCode::UnbornBranch {
-                // HEAD should only be an unborn branch if the repository is fresh, in that case
-                // read directly from `.git/HEAD`.
-                let mut head_path = repo.path().to_path_buf();
-                head_path.push("HEAD");
-                // Get the first line, then last path segment.
-                std::fs::read_to_string(&head_path)
-                    .ok()?
-                    .lines()
-                    .next()?
-                    .trim()
-                    .split('/')
-                    .last()
-                    .map(|r| r.to_owned())
-            } else {
-                None
-            };
-        }
-    };
-    let shorthand = head.shorthand();
-    shorthand.map(|x| x.into())
 }
 
 fn main() {
@@ -294,7 +267,7 @@ impl Git {
         let head = match self.repo.head() {
             Ok(reference) => reference,
             Err(e) => {
-                return if e.code() == git2::ErrorCode::UnbornBranch {
+                return if e.code() == ErrorCode::UnbornBranch {
                     // HEAD should only be an unborn branch if the repository is fresh, in that case
                     // read directly from `.git/HEAD`.
                     let mut head_path = self.repo.path().to_path_buf();
