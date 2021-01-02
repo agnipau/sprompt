@@ -3,11 +3,11 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
+use git2::Repository;
 use std::convert::TryFrom;
 use std::env;
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::fs;
 use std::time::Duration;
 
 const MIN_CMD_EXEC_TIME: Duration = Duration::from_secs(2);
@@ -67,6 +67,33 @@ fn test_humanize_duration() {
         "34h 59m 59s",
         humanize_duration(&Duration::from_secs(60 * 60 * 34 + 60 * 59 + 59))
     );
+}
+
+fn get_current_branch(repo: &Repository) -> Option<String> {
+    let head = match repo.head() {
+        Ok(reference) => reference,
+        Err(e) => {
+            return if e.code() == git2::ErrorCode::UnbornBranch {
+                // HEAD should only be an unborn branch if the repository is fresh, in that case
+                // read directly from `.git/HEAD`.
+                let mut head_path = repo.path().to_path_buf();
+                head_path.push("HEAD");
+                // Get the first line, then last path segment.
+                std::fs::read_to_string(&head_path)
+                    .ok()?
+                    .lines()
+                    .next()?
+                    .trim()
+                    .split('/')
+                    .last()
+                    .map(|r| r.to_owned())
+            } else {
+                None
+            };
+        }
+    };
+    let shorthand = head.shorthand();
+    shorthand.map(|x| x.into())
 }
 
 fn main() {
@@ -161,7 +188,7 @@ fn main() {
 
             let use_short_path = matches.is_present("short_path");
             let path = get_current_path(if use_short_path {
-                Some(git.as_ref().map(|x| x.toplevel.as_ref()))
+                Some(git.as_ref().and_then(|x| x.toplevel()))
             } else {
                 None
             })
@@ -253,111 +280,52 @@ fn main() {
 }
 
 struct Git {
-    toplevel: PathBuf,
+    repo: Repository,
 }
 
 impl Git {
     fn new() -> Option<Self> {
-        Some(Self {
-            toplevel: Git::toplevel()?,
-        })
+        let repo = Repository::discover(env::current_dir().ok()?).ok()?;
+        Some(Self { repo })
     }
 
-    // https://stackoverflow.com/a/16925062
-    fn toplevel() -> Option<PathBuf> {
-        let stdout = Command::new("git")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .args(&["rev-parse", "--show-toplevel"])
-            .output()
-            .ok()?
-            .stdout;
-        if stdout.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(String::from_utf8(stdout).ok()?.trim_end()))
-        }
-    }
-
-    // https://stackoverflow.com/a/2659808
-    fn has_staged_changes(&self) -> Option<bool> {
-        Some(
-            Command::new("git")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .args(&["diff-index", "--quiet", "--cached", "HEAD", "--"])
-                .status()
-                .ok()?
-                .code()?
-                == 1,
-        )
-    }
-
-    // https://stackoverflow.com/a/2659808
-    fn has_changes_to_stage(&self) -> Option<bool> {
-        Some(
-            Command::new("git")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .args(&["diff-files", "--quiet"])
-                .status()
-                .ok()?
-                .code()?
-                == 1,
-        )
-    }
-
-    // https://stackoverflow.com/a/2659808
-    fn has_staged_and_changes_to_stage(&self) -> Option<bool> {
-        Some(
-            Command::new("git")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .args(&["diff-index", "--quiet", "HEAD", "--"])
-                .status()
-                .ok()?
-                .code()?
-                == 1,
-        )
-    }
-
-    // https://stackoverflow.com/a/2659808
-    fn has_untracked_files(&self) -> Option<bool> {
-        Some(
-            !Command::new("git")
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .args(&["ls-files", "--others"])
-                .output()
-                .ok()?
-                .stdout
-                .is_empty(),
-        )
-    }
-
-    // https://stackoverflow.com/a/11868440
+    // https://github.com/starship/starship/blob/d670212a083e9f1e9c9a2313e7ce5e72e908efa7/src/context.rs
     fn branch(&self) -> Option<String> {
-        let git_branch = String::from_utf8(
-            Command::new("git")
-                .args(&["symbolic-ref", "--short", "HEAD"])
-                .output()
-                .ok()?
-                .stdout,
-        )
-        .ok()?;
-        Some(git_branch.trim_end().to_owned())
+        let head = match self.repo.head() {
+            Ok(reference) => reference,
+            Err(e) => {
+                return if e.code() == git2::ErrorCode::UnbornBranch {
+                    // HEAD should only be an unborn branch if the repository is fresh, in that case
+                    // read directly from `.git/HEAD`.
+                    let mut head_path = self.repo.path().to_path_buf();
+                    head_path.push("HEAD");
+                    // Get the first line, then last path segment.
+                    fs::read_to_string(&head_path)
+                        .ok()?
+                        .lines()
+                        .next()?
+                        .trim()
+                        .split('/')
+                        .last()
+                        .map(|r| r.to_owned())
+                } else {
+                    None
+                };
+            }
+        };
+        let shorthand = head.shorthand();
+        shorthand.map(|x| x.into())
+    }
+
+    fn toplevel(&self) -> Option<&str> {
+        Some(self.repo.workdir()?.file_name()?.to_str()?)
     }
 }
 
 /// If `short` is None, the full path will be returned.
 /// If `short` is Some, a shorter variant will be returned, in this case we also need to know the
 /// repo name.
-type InsideGitRepo<'a> = Option<&'a Path>;
+type InsideGitRepo<'a> = Option<&'a str>;
 type Short<'a> = Option<InsideGitRepo<'a>>;
 fn get_current_path(short: Short) -> Option<String> {
     let path = env::current_dir().ok()?;
@@ -376,10 +344,9 @@ fn get_current_path(short: Short) -> Option<String> {
         path
     };
 
-    let short = short.map(|x| x.map(|y| y.file_name().and_then(|z| z.to_str())));
     match short {
-        // Short path inside git tree and toplevel is valid.
-        Some(Some(Some(toplevel))) => {
+        // Short path inside git tree.
+        Some(Some(toplevel)) => {
             let mut parts = path.split('/').rev().take(3).collect::<Vec<_>>();
             parts.reverse();
             if parts[1] == toplevel {
@@ -390,8 +357,8 @@ fn get_current_path(short: Short) -> Option<String> {
             }
             Some(parts.join("/"))
         }
-        // Short path NOT inside git tree or toplevel is not valid.
-        Some(None) | Some(Some(None)) => {
+        // Short path NOT inside git tree.
+        Some(None) => {
             let mut parts = path.split('/').rev().take(3).collect::<Vec<_>>();
             parts.reverse();
             Some(parts.join("/"))
