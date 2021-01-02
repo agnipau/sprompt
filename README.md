@@ -4,4 +4,4 @@ Supported shells:
 
 - [X] bash
 - [X] zsh
-- [ ] powershell
+- [ ] TODO: powershell
