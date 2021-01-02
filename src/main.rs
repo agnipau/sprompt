@@ -8,6 +8,66 @@ use std::env;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
+
+const MIN_CMD_EXEC_TIME: Duration = Duration::from_secs(5);
+
+fn elapsed_seconds_validator(s: String) -> Result<(), String> {
+    if s.parse::<usize>().is_err() {
+        Err("The argument must be a valid positive integer".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[inline]
+fn humanize_duration(dur: &Duration) -> String {
+    let secs = dur.as_secs();
+    if secs == 0 {
+        return Default::default();
+    }
+    if secs < 60 {
+        return format!("{}s", secs);
+    }
+    if secs < 3600 {
+        return format!(
+            "{}m {}",
+            (secs as f32 / 60.0).trunc() as usize,
+            humanize_duration(&Duration::from_secs(secs % 60))
+        )
+        .trim_end()
+        .into();
+    }
+    return format!(
+        "{}h {}",
+        (secs as f32 / 3600.0).trunc() as usize,
+        humanize_duration(&Duration::from_secs(secs % 3600)),
+    )
+    .trim_end()
+    .into();
+}
+
+#[test]
+fn test_humanize_duration() {
+    assert_eq!("", humanize_duration(&Duration::from_secs(0)));
+    assert_eq!("59s", humanize_duration(&Duration::from_secs(59)));
+    assert_eq!("1m", humanize_duration(&Duration::from_secs(60)));
+    assert_eq!("1m 59s", humanize_duration(&Duration::from_secs(60 + 59)));
+    assert_eq!("2m 1s", humanize_duration(&Duration::from_secs(60 * 2 + 1)));
+    assert_eq!(
+        "59m 59s",
+        humanize_duration(&Duration::from_secs(60 * 59 + 59))
+    );
+    assert_eq!("1h", humanize_duration(&Duration::from_secs(60 * 60)));
+    assert_eq!(
+        "1h 1s",
+        humanize_duration(&Duration::from_secs(60 * 60 + 1))
+    );
+    assert_eq!(
+        "34h 59m 59s",
+        humanize_duration(&Duration::from_secs(60 * 60 * 34 + 60 * 59 + 59))
+    );
+}
 
 fn main() {
     let matches = App::new(crate_name!())
@@ -35,6 +95,14 @@ fn main() {
                         .help("The shell where the prompt will be shown")
                         .required(true)
                         .possible_values(&Shell::SUPPORTED),
+                )
+                .arg(
+                    Arg::with_name("elapsed_seconds")
+                        .long("elapsed-seconds")
+                        .takes_value(true)
+                        .help("Last command's execution time in seconds")
+                        .required(true)
+                        .validator(elapsed_seconds_validator),
                 )
                 .arg(
                     Arg::with_name("unicode")
@@ -102,6 +170,14 @@ fn main() {
             // TODO(agnipau): Windows support.
             let is_root = unsafe { libc::getuid() } == 0;
 
+            // parse can't fail, we checked this using clap.
+            let elapsed: usize = matches
+                .value_of("elapsed_seconds")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let elapsed = Duration::from_secs(elapsed as u64);
+
             let mut s = String::new();
             if is_root {
                 let _ = write!(
@@ -132,6 +208,14 @@ fn main() {
                 // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
                 // (like UnrealEngine) is quite difficult.
             }
+            if elapsed >= MIN_CMD_EXEC_TIME {
+                let _ = write!(
+                    &mut s,
+                    "{}took {} ",
+                    Color::Yellow.to_str(false, shell),
+                    humanize_duration(&elapsed),
+                );
+            }
             let _ = write!(
                 &mut s,
                 "{}{}{} ",
@@ -147,7 +231,6 @@ fn main() {
             print!("{}", s);
         }
         ("init", Some(matches)) => {
-            let shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
             let mut args = String::new();
             let unicode = matches.is_present("unicode");
             if unicode {
@@ -158,6 +241,8 @@ fn main() {
                 args.push_str("-p ");
             }
             let args = args.trim_end();
+
+            let shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
             println!("{}", shell.init_code(args));
         }
         _ => unreachable!(),
@@ -323,20 +408,32 @@ impl Shell {
 
     fn init_code(&self, args: &str) -> String {
         match self {
-            Self::Zsh => {
-                format!(
-                    r#"""setopt PROMPT_SUBST
-PROMPT="\$(sprompt prompt -e \$? -s zsh {})""""#,
-                    args
-                )
-            }
-            Self::Bash => {
-                format!(
-                    r#"""PS1=""
-PROMPT_COMMAND="sprompt prompt -e \$? -s bash {}""""#,
-                    args
-                )
-            }
+            Self::Zsh => format!(
+                r#"
+preexec() {{
+    pre_exec_seconds="$SECONDS"
+}}
+
+precmd() {{
+    elapsed_seconds="$(( SECONDS - pre_exec_seconds ))"
+}}
+
+setopt PROMPT_SUBST
+PROMPT="\$(sprompt prompt -e \$? -s zsh --elapsed-seconds "\$elapsed_seconds" {})"
+"#,
+                args
+            )
+            .trim()
+            .into(),
+            Self::Bash => format!(
+                r#"
+PS1=""
+PROMPT_COMMAND="sprompt prompt -e \$? -s bash {}"
+"#,
+                args
+            )
+            .trim()
+            .into(),
         }
     }
 }
