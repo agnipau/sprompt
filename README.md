@@ -1,3 +1,7 @@
 # sprompt
 
-My cross platform shell prompt.
+Supported shells:
+
+- [X] bash
+- [X] zsh
+- [ ] powershell
