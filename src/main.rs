@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg};
+use clap::{
+    crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
+};
 use std::convert::TryFrom;
 use std::env;
 use std::fmt::Write;
@@ -12,105 +14,154 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about(crate_description!())
-        .settings(&[AppSettings::ColorAuto, AppSettings::ColoredHelp])
-        .arg(
-            Arg::with_name("exit_code")
-                .long("exit-code")
-                .short("e")
-                .takes_value(true)
-                .help("Last command exit code")
-                .required(true),
+        .settings(&[AppSettings::SubcommandRequired])
+        .global_settings(&[AppSettings::ColorAuto, AppSettings::ColoredHelp])
+        .subcommand(
+            SubCommand::with_name("prompt")
+                .about("Output the prompt string")
+                .arg(
+                    Arg::with_name("exit_code")
+                        .long("exit-code")
+                        .short("e")
+                        .takes_value(true)
+                        .help("Last command exit code")
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("shell")
+                        .long("shell")
+                        .short("s")
+                        .takes_value(true)
+                        .help("The shell where the prompt will be shown")
+                        .required(true)
+                        .possible_values(&Shell::SUPPORTED),
+                )
+                .arg(
+                    Arg::with_name("unicode")
+                        .long("unicode")
+                        .short("u")
+                        .help("Use unicode symbols"),
+                )
+                .arg(
+                    Arg::with_name("short_path")
+                        .long("short-path")
+                        .short("p")
+                        .help("Show the current path in a reduced form"),
+                ),
         )
-        .arg(
-            Arg::with_name("shell")
-                .long("shell")
-                .short("s")
-                .takes_value(true)
-                .help("The shell where the prompt will be shown")
-                .required(true)
-                .possible_values(&["zsh", "posix"]),
-        )
-        .arg(
-            Arg::with_name("unicode")
-                .long("unicode")
-                .short("u")
-                .help("Use unicode symbols"),
-        )
-        .arg(
-            Arg::with_name("short_path")
-                .long("short-path")
-                .short("p")
-                .help("Show the current path in a reduced form"),
+        .subcommand(
+            SubCommand::with_name("init")
+                .about("Output code to be evaluated by the shell to init the prompt")
+                .arg(
+                    Arg::with_name("shell")
+                        .long("shell")
+                        .short("s")
+                        .takes_value(true)
+                        .help("The shell for which to output the init code")
+                        .required(true)
+                        .possible_values(&Shell::SUPPORTED),
+                )
+                .arg(
+                    Arg::with_name("unicode")
+                        .long("unicode")
+                        .short("u")
+                        .help("Use unicode symbols"),
+                )
+                .arg(
+                    Arg::with_name("short_path")
+                        .long("short-path")
+                        .short("p")
+                        .help("Show the current path in a reduced form"),
+                ),
         )
         .get_matches();
 
-    let non_zero_exit_status = matches.value_of("exit_code").unwrap() != "0";
-    let ref shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
+    match matches.subcommand() {
+        ("prompt", Some(matches)) => {
+            let non_zero_exit_status = matches.value_of("exit_code").unwrap() != "0";
+            let ref shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
 
-    let use_unicode = matches.is_present("unicode");
-    let branch_symbol = if use_unicode {
-        " "
-    } else {
-        Default::default()
-    };
-    let separator_symbol = if use_unicode { "❯" } else { "::" };
+            let use_unicode = matches.is_present("unicode");
+            let branch_symbol = if use_unicode {
+                " "
+            } else {
+                Default::default()
+            };
+            let separator_symbol = if use_unicode { "❯" } else { "::" };
 
-    let git = Git::new();
+            let git = Git::new();
 
-    let use_short_path = matches.is_present("short_path");
-    let path = get_current_path(if use_short_path {
-        Some(git.as_ref().map(|x| x.toplevel.as_ref()))
-    } else {
-        None
-    })
-    .unwrap_or("??".into());
+            let use_short_path = matches.is_present("short_path");
+            let path = get_current_path(if use_short_path {
+                Some(git.as_ref().map(|x| x.toplevel.as_ref()))
+            } else {
+                None
+            })
+            .unwrap_or("??".into());
 
-    // TODO(agnipau): Windows support.
-    let is_root = unsafe { libc::getuid() } == 0;
+            // TODO(agnipau): Windows support.
+            let is_root = unsafe { libc::getuid() } == 0;
 
-    let mut s = String::new();
-    if is_root {
-        let _ = write!(
-            &mut s,
-            "{}{}root{} in ",
-            Attribute::Bold.to_str(shell),
-            Color::Red.to_str(false, shell),
-            Attribute::Reset.to_str(shell)
-        );
+            let mut s = String::new();
+            if is_root {
+                let _ = write!(
+                    &mut s,
+                    "{}{}root{} in ",
+                    Attribute::Bold.to_str(shell),
+                    Color::Red.to_str(false, shell),
+                    Attribute::Reset.to_str(shell)
+                );
+            }
+            let _ = write!(
+                &mut s,
+                "{}{}{} ",
+                Attribute::Bold.to_str(shell),
+                Color::Cyan.to_str(false, shell),
+                path
+            );
+            if let Some(branch) = git.and_then(|x| x.branch()) {
+                let _ = write!(
+                    &mut s,
+                    "{}on {}{}{}{} ",
+                    Attribute::Reset.to_str(shell),
+                    Attribute::Bold.to_str(shell),
+                    Color::Magenta.to_str(false, shell),
+                    branch_symbol,
+                    branch
+                );
+                // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
+                // (like UnrealEngine) is quite difficult.
+            }
+            let _ = write!(
+                &mut s,
+                "{}{}{} ",
+                if non_zero_exit_status {
+                    Color::Red.to_str(false, shell)
+                } else {
+                    Color::Green.to_str(false, shell)
+                },
+                separator_symbol,
+                Attribute::Reset.to_str(shell),
+            );
+
+            print!("{}", s);
+        }
+        ("init", Some(matches)) => {
+            let shell = Shell::try_from(matches.value_of("shell").unwrap()).unwrap();
+            let mut args = String::new();
+            let unicode = matches.is_present("unicode");
+            if unicode {
+                args.push_str("-u ");
+            }
+            let short_path = matches.is_present("short_path");
+            if short_path {
+                args.push_str("-p ");
+            }
+            let args = args.trim_end();
+            println!("{}", shell.init_code(args));
+        }
+        _ => unreachable!(),
     }
-    let _ = write!(
-        &mut s,
-        "{}{}{} ",
-        Attribute::Bold.to_str(shell),
-        Color::Cyan.to_str(false, shell),
-        path
-    );
-    if let Some(branch) = git.and_then(|x| x.branch()) {
-        let _ = write!(
-            &mut s,
-            "{}on {}{}{}{} ",
-            Attribute::Reset.to_str(shell),
-            Attribute::Bold.to_str(shell),
-            Color::Magenta.to_str(false, shell),
-            branch_symbol,
-            branch
-        );
-        // TODO(agnipau): Checking for git dirty state in a decently performant way in big repos
-        // (like UnrealEngine) is quite difficult.
-    }
-    let _ = write!(
-        &mut s,
-        "{}{}{} ",
-        if non_zero_exit_status {
-            Color::Red.to_str(false, shell)
-        } else {
-            Color::Green.to_str(false, shell)
-        },
-        separator_symbol,
-        Attribute::Reset.to_str(shell),
-    );
-
-    print!("{}", s);
 }
 
 struct Git {
@@ -264,7 +315,30 @@ fn get_current_path(short: Short) -> Option<String> {
 
 enum Shell {
     Zsh,
-    Posix,
+    Bash,
+}
+
+impl Shell {
+    const SUPPORTED: [&'static str; 2] = ["zsh", "bash"];
+
+    fn init_code(&self, args: &str) -> String {
+        match self {
+            Self::Zsh => {
+                format!(
+                    r#"""setopt PROMPT_SUBST
+PROMPT="\$(sprompt prompt -e \$? -s zsh {})""""#,
+                    args
+                )
+            }
+            Self::Bash => {
+                format!(
+                    r#"""PS1=""
+PROMPT_COMMAND="sprompt prompt -e \$? -s bash {}""""#,
+                    args
+                )
+            }
+        }
+    }
 }
 
 impl TryFrom<&str> for Shell {
@@ -273,7 +347,7 @@ impl TryFrom<&str> for Shell {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "zsh" => Ok(Self::Zsh),
-            "posix" => Ok(Self::Posix),
+            "bash" => Ok(Self::Bash),
             _ => Err(()),
         }
     }
@@ -292,10 +366,10 @@ enum Color {
 
 impl Color {
     // TODO(agnipau): Windows support.
-    fn to_str(&self, bright: bool, shell: &Shell) -> &str {
+    const fn to_str(&self, bright: bool, shell: &Shell) -> &str {
         match self {
             Self::Black => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[30;1m"
                     } else {
@@ -311,7 +385,7 @@ impl Color {
                 }
             },
             Self::Red => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[31;1m"
                     } else {
@@ -327,7 +401,7 @@ impl Color {
                 }
             },
             Self::Green => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[32;1m"
                     } else {
@@ -343,7 +417,7 @@ impl Color {
                 }
             },
             Self::Yellow => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[33;1m"
                     } else {
@@ -359,7 +433,7 @@ impl Color {
                 }
             },
             Self::Blue => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[34;1m"
                     } else {
@@ -375,7 +449,7 @@ impl Color {
                 }
             },
             Self::Magenta => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[35;1m"
                     } else {
@@ -391,7 +465,7 @@ impl Color {
                 }
             },
             Self::Cyan => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[36;1m"
                     } else {
@@ -407,7 +481,7 @@ impl Color {
                 }
             },
             Self::White => match shell {
-                Shell::Posix => {
+                Shell::Bash => {
                     if bright {
                         "\u{001b}[37;1m"
                     } else {
@@ -435,22 +509,22 @@ enum Attribute {
 
 impl Attribute {
     // TODO(agnipau): Windows support.
-    fn to_str(&self, shell: &Shell) -> &str {
+    const fn to_str(&self, shell: &Shell) -> &str {
         match self {
             Self::Reset => match shell {
-                Shell::Posix => "\u{001b}[0m",
+                Shell::Bash => "\u{001b}[0m",
                 Shell::Zsh => "%{\u{001b}[0m%}",
             },
             Self::Bold => match shell {
-                Shell::Posix => "\u{001b}[1m",
+                Shell::Bash => "\u{001b}[1m",
                 Shell::Zsh => "%{\u{001b}[1m%}",
             },
             Self::Underline => match shell {
-                Shell::Posix => "\u{001b}[4m",
+                Shell::Bash => "\u{001b}[4m",
                 Shell::Zsh => "%{\u{001b}[4m%}",
             },
             Self::Reversed => match shell {
-                Shell::Posix => "\u{001b}[7m",
+                Shell::Bash => "\u{001b}[7m",
                 Shell::Zsh => "%{\u{001b}[7m%}",
             },
         }
