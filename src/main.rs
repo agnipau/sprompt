@@ -406,12 +406,20 @@ enum Shell {
 impl Shell {
     const SUPPORTED: [&'static str; 2] = ["zsh", "bash"];
 
+    // FIXME(agnipau): In bash, enter doesn't work but ctrl-c works.
     fn init_code(&self, args: &str) -> String {
         match self {
             Self::Zsh => format!(
                 r#"
 preexec() {{
+    _sprompt_preexec_ran=true
     _sprompt_last_seconds="$SECONDS"
+}}
+precmd() {{
+    if [ "$_sprompt_preexec_ran" = false ]; then
+        _sprompt_last_seconds="$SECONDS"
+    fi
+    _sprompt_preexec_ran=false
 }}
 setopt PROMPT_SUBST
 PROMPT="\$(sprompt prompt -e "\$?" -s zsh --elapsed-seconds "\$(( SECONDS - _sprompt_last_seconds ))"{args})"
@@ -423,6 +431,7 @@ PROMPT="\$(sprompt prompt -e "\$?" -s zsh --elapsed-seconds "\$(( SECONDS - _spr
             Self::Bash => format!(
                 r#"
 _sprompt_beforecmd() {{
+    echo "sobos $BASH_COMMAND"
     [ "${{_sprompt_beforecmd_ran:=false}}" = true ] && return
     _sprompt_beforecmd_ran=true
     _sprompt_last_seconds="$SECONDS"
