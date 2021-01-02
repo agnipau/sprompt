@@ -231,7 +231,7 @@ fn main() {
             print!("{}", s);
         }
         ("init", Some(matches)) => {
-            let mut args = String::new();
+            let mut args = String::from(" ");
             let unicode = matches.is_present("unicode");
             if unicode {
                 args.push_str("-u ");
@@ -411,26 +411,41 @@ impl Shell {
             Self::Zsh => format!(
                 r#"
 preexec() {{
-    pre_exec_seconds="$SECONDS"
+    _sprompt_last_seconds="$SECONDS"
 }}
-
-precmd() {{
-    elapsed_seconds="$(( SECONDS - pre_exec_seconds ))"
-}}
-
 setopt PROMPT_SUBST
-PROMPT="\$(sprompt prompt -e \$? -s zsh --elapsed-seconds "\$elapsed_seconds" {})"
+PROMPT="\$(sprompt prompt -e "\$?" -s zsh --elapsed-seconds "\$(( SECONDS - _sprompt_last_seconds ))"{args})"
 "#,
-                args
+                args = args
             )
             .trim()
             .into(),
             Self::Bash => format!(
                 r#"
-PS1=""
-PROMPT_COMMAND="sprompt prompt -e \$? -s bash {}"
+_sprompt_beforecmd() {{
+    [ "${{_sprompt_beforecmd_ran:=false}}" = true ] && return
+    _sprompt_beforecmd_ran=true
+    _sprompt_last_seconds="$SECONDS"
+}}
+trap _sprompt_beforecmd DEBUG
+
+_sprompt_aftercmd() {{
+    STATUS="$?"
+    if [ "${{_sprompt_aftercmd_first_run:=true}}" = true ]; then
+        _sprompt_aftercmd_first_run=false
+    else
+        _sprompt_beforecmd_ran=false
+        if [ "$_sprompt_last_seconds" -eq 0 ]; then
+            _sprompt_last_seconds="$SECONDS"
+        fi
+        _sprompt_elapsed_seconds="$(( SECONDS - _sprompt_last_seconds ))"
+    fi
+    sprompt prompt -e "$STATUS" -s bash --elapsed-seconds "${{_sprompt_elapsed_seconds:=0}}"{args}
+}}
+PS1=
+PROMPT_COMMAND=_sprompt_aftercmd
 "#,
-                args
+                args = args
             )
             .trim()
             .into(),
