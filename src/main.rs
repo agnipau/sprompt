@@ -65,7 +65,19 @@ fn main() {
     })
     .unwrap_or("??".into());
 
+    // TODO(agnipau): Windows support.
+    let is_root = unsafe { libc::getuid() } == 0;
+
     let mut s = String::new();
+    if is_root {
+        let _ = write!(
+            &mut s,
+            "{}{}root{} in ",
+            Attribute::Bold.to_str(shell),
+            Color::Red.to_str(false, shell),
+            Attribute::Reset.to_str(shell)
+        );
+    }
     let _ = write!(
         &mut s,
         "{}{}{} ",
@@ -279,6 +291,7 @@ enum Color {
 }
 
 impl Color {
+    // TODO(agnipau): Windows support.
     fn to_str(&self, bright: bool, shell: &Shell) -> &str {
         match self {
             Self::Black => match shell {
@@ -421,6 +434,7 @@ enum Attribute {
 }
 
 impl Attribute {
+    // TODO(agnipau): Windows support.
     fn to_str(&self, shell: &Shell) -> &str {
         match self {
             Self::Reset => match shell {
