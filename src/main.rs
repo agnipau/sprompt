@@ -218,7 +218,7 @@ fn main() {
             }
             let _ = write!(
                 &mut s,
-                "{}{}{} ",
+                "{}{}{}",
                 if non_zero_exit_status {
                     Color::Red.to_str(false, shell)
                 } else {
@@ -227,6 +227,9 @@ fn main() {
                 separator_symbol,
                 Attribute::Reset.to_str(shell),
             );
+            if *shell != Shell::Bash {
+                let _ = write!(&mut s, " ");
+            }
 
             print!("{}", s);
         }
@@ -398,6 +401,7 @@ fn get_current_path(short: Short) -> Option<String> {
     }
 }
 
+#[derive(PartialEq)]
 enum Shell {
     Zsh,
     Bash,
@@ -406,7 +410,6 @@ enum Shell {
 impl Shell {
     const SUPPORTED: [&'static str; 2] = ["zsh", "bash"];
 
-    // FIXME(agnipau): In bash, enter doesn't work but ctrl-c works.
     fn init_code(&self, args: &str) -> String {
         match self {
             Self::Zsh => format!(
@@ -431,7 +434,6 @@ PROMPT="\$(sprompt prompt -e "\$?" -s zsh --elapsed-seconds "\$(( SECONDS - _spr
             Self::Bash => format!(
                 r#"
 _sprompt_beforecmd() {{
-    echo "sobos $BASH_COMMAND"
     [ "${{_sprompt_beforecmd_ran:=false}}" = true ] && return
     _sprompt_beforecmd_ran=true
     _sprompt_last_seconds="$SECONDS"
@@ -451,7 +453,8 @@ _sprompt_aftercmd() {{
     fi
     sprompt prompt -e "$STATUS" -s bash --elapsed-seconds "${{_sprompt_elapsed_seconds:=0}}"{args}
 }}
-PS1=
+# If PS1 is completely empty, pressing the <enter> key doesn't work.
+PS1=\ 
 PROMPT_COMMAND=_sprompt_aftercmd
 "#,
                 args = args
