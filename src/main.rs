@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-const MIN_CMD_EXEC_TIME: Duration = Duration::from_secs(5);
+const MIN_CMD_EXEC_TIME: Duration = Duration::from_secs(2);
 
 fn elapsed_seconds_validator(s: String) -> Result<(), String> {
     if s.parse::<usize>().is_err() {
